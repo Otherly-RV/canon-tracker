@@ -6,12 +6,12 @@ async function callGemini(prompt: string) {
   const r = await fetch("/api/gemini", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt })
+    body: JSON.stringify({ prompt }),
   });
 
   const data = await r.json();
   if (!r.ok) throw new Error(data?.error || "Gemini request failed");
-  return String(data.text || "");
+  return String(data?.text || "");
 }
 
 export const useAiAnalysis = () => {
@@ -23,18 +23,15 @@ export const useAiAnalysis = () => {
       const prompt = `
 ${execContractText}
 
-**TASK:**
-Analyze the provided source document and identify the primary characters and locations.
-- For characters, list the names of the main protagonist, antagonist, and key supporting characters.
-- For locations, list the names of the most important and frequently mentioned settings.
-- Return ONLY a JSON object with two keys: "characters" and "locations", each containing an array of strings.
+TASK:
+Extract main characters and main locations from the source document.
+Return ONLY valid JSON in this shape:
+{"characters":["..."],"locations":["..."]}
 
-**SOURCE OF TRUTH (Hard Canon):**
+SOURCE:
 ---
-${documentText}
+${documentText.substring(0, 50000)}
 ---
-
-Respond ONLY with the specified JSON object.
 `;
 
       const text = await callGemini(prompt);
