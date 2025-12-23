@@ -1,21 +1,26 @@
+import { useState, useCallback } from "react";
+import { buildFieldPrompt } from "../utils/prompt-builder.ts";
+import { IdentifiedEntities } from "../types.ts";
 
-import { useState, useCallback } from 'react';
-import { GoogleGenAI, Type } from '@google/genai';
-import { buildFieldPrompt } from '../utils/prompt-builder.ts';
-import { IdentifiedEntities } from '../types.ts';
+async function callGemini(prompt: string) {
+  const r = await fetch("/api/gemini", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt })
+  });
 
-const API_KEY = process.env.API_KEY;
-if (!API_KEY) console.warn("API_KEY environment variable not set. AI analysis will fail.");
-
-const ai = new GoogleGenAI({ apiKey: API_KEY, vertexai: true });
-const model = 'gemini-2.5-flash';
+  const data = await r.json();
+  if (!r.ok) throw new Error(data?.error || "Gemini request failed");
+  return String(data.text || "");
+}
 
 export const useAiAnalysis = () => {
-    const [isAnalyzing, setIsAnalyzing] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-    const identifyEntities = useCallback(async (documentText: string, execContractText: string): Promise<IdentifiedEntities> => {
-        const prompt = `
+  const identifyEntities = useCallback(
+    async (documentText: string, execContractText: string): Promise<IdentifiedEntities> => {
+      const prompt = `
 ${execContractText}
 
 **TASK:**
@@ -26,75 +31,45 @@ Analyze the provided source document and identify the primary characters and loc
 
 **SOURCE OF TRUTH (Hard Canon):**
 ---
-${documentText.substring(0, 50000)}
+${documentText}
 ---
 
 Respond ONLY with the specified JSON object.
 `;
-        const responseSchema = {
-            type: Type.OBJECT,
-            properties: {
-                characters: { type: Type.ARRAY, items: { type: Type.STRING } },
-                locations: { type: Type.ARRAY, items: { type: Type.STRING } },
-            },
-            required: ['characters', 'locations'],
-        };
 
-        try {
-            const response = await ai.models.generateContent({
-                model,
-                contents: { role: 'user', parts: [{ text: prompt }] },
-                config: { responseMimeType: 'application/json', responseSchema, temperature: 0.1 },
-            });
-            const result = JSON.parse(response.text);
-            return result as IdentifiedEntities;
-        } catch (e) {
-            console.error("Error identifying entities:", e);
-            throw new Error("Failed to identify characters and locations from the document.");
-        }
-    }, []);
+      const text = await callGemini(prompt);
+      return JSON.parse(text) as IdentifiedEntities;
+    },
+    []
+  );
 
-    const generateContentForAllFields = useCallback(async (
-        documentText: string,
-        checklistItems: string[],
-        execContractText: string,
-        fieldRules: any,
-        onFieldCompleted: (path: string, content: string) => void
-    ): Promise<void> => {
-        setIsAnalyzing(true);
-        setError(null);
+  const generateContentForAllFields = useCallback(
+    async (
+      documentText: string,
+      checklistItems: string[],
+      execContractText: string,
+      fieldRules: any,
+      onFieldCompleted: (path: string, content: string) => void
+    ) => {
+      setIsAnalyzing(true);
+      setError(null);
 
-        if (!API_KEY) {
-            const msg = "Gemini API key is not configured.";
-            setError(msg);
-            setIsAnalyzing(false);
-            throw new Error(msg);
-        }
-
+      try {
         for (const fieldPath of checklistItems) {
-            try {
-                const prompt = buildFieldPrompt(fieldPath, documentText, execContractText, fieldRules);
-                
-                const response = await ai.models.generateContent({
-                    model,
-                    contents: { role: 'user', parts: [{ text: prompt }] },
-                    config: { temperature: 0.2 },
-                });
-
-                const content = response.text.trim();
-                onFieldCompleted(fieldPath, content);
-
-            } catch (e) {
-                console.error(`Error processing field ${fieldPath}:`, e);
-                let errorMessage = `Error on field ${fieldPath}.`;
-                if (e instanceof Error) errorMessage = e.message;
-                setError(errorMessage);
-                setIsAnalyzing(false);
-                throw new Error(errorMessage);
-            }
+          const prompt = buildFieldPrompt(fieldPath, documentText, execContractText, fieldRules);
+          const text = await callGemini(prompt);
+          onFieldCompleted(fieldPath, text.trim());
         }
+      } catch (e: any) {
+        setError(e?.message || "Generation failed");
         setIsAnalyzing(false);
-    }, []);
+        throw e;
+      }
 
-    return { identifyEntities, generateContentForAllFields, isAnalyzing, error };
+      setIsAnalyzing(false);
+    },
+    []
+  );
+
+  return { identifyEntities, generateContentForAllFields, isAnalyzing, error };
 };
